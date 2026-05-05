@@ -3,6 +3,7 @@ def call(Map config = [:]) {
     def sourceVersion = config.sourceVersion ?: ""
     def targetVersion = config.targetVersion ?: ""
     def testIds = config.testIds ?: ""
+    def defaultGitBranch = config.defaultGitBranch ?: 'main'
 
     def allSourceVersions = ['ES_1.5', 'ES_2.4', 'ES_5.6', 'ES_6.8', 'ES_7.10', 'SOLR_8.11']
     def allTargetVersions = ['OS_1.3', 'OS_2.19', 'OS_3.1']
@@ -12,7 +13,7 @@ def call(Map config = [:]) {
 
         parameters {
             string(name: 'GIT_REPO_URL', defaultValue: 'https://github.com/opensearch-project/opensearch-migrations.git', description: 'Git repository url')
-            string(name: 'GIT_BRANCH', defaultValue: 'main', description: 'Git branch to use for repository')
+            string(name: 'GIT_BRANCH', defaultValue: defaultGitBranch, description: 'Git branch to use for repository')
             string(name: 'GIT_COMMIT', defaultValue: '', description: '(Optional) Specific commit to checkout after cloning branch')
             choice(
                     name: 'SOURCE_VERSION',
