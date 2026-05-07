@@ -138,7 +138,6 @@ def call(Map config = [:]) {
                                         clusters: [
                                             [
                                                 clusterId: "source",
-                                                clusterName: "${maStageName}-source",
                                                 clusterVersion: env.sourceVer,
                                                 clusterType: params.SOURCE_CLUSTER_TYPE,
                                                 domainRemovalPolicy: "DESTROY",
@@ -155,7 +154,6 @@ def call(Map config = [:]) {
                                             ],
                                             [
                                                 clusterId: "target",
-                                                clusterName: "${maStageName}-target",
                                                 clusterType: "OPENSEARCH_SERVERLESS",
                                                 collectionType: "SEARCH",
                                                 standbyReplicas: "DISABLED",

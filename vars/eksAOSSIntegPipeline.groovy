@@ -143,7 +143,6 @@ def call(Map config = [:]) {
                                         clusters: [
                                             [
                                                 clusterId: "target",
-                                                clusterName: "${maStageName}-target",
                                                 clusterType: "OPENSEARCH_SERVERLESS",
                                                 collectionType: collectionType,
                                                 standbyReplicas: "DISABLED",

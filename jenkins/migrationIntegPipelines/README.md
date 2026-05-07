@@ -138,3 +138,17 @@ Rules:
 Jenkins' `H` token deterministically hashes the job name into a slot within the allowed range, so jobs sharing the same cron expression still fire at unique minutes. The explicit `H(0-5)/6` hour range forces Jenkins to also spread jobs across different starting hours — without the range, all `H/6` jobs collapse into hour slot 0.
 
 To change a cadence or add one for a new `main-*` / `release-*` job, edit the switch in `vars/periodicCron.groovy` and rebuild the shared library.
+
+### Path Filtering
+
+Not all PRs need to run Jenkins tests. The `jenkins_tests.yml` workflow skips all 17 test jobs when a PR only touches files that cannot affect test outcomes:
+
+- `**/*.md` — documentation
+- `AIAdvisor/**` — standalone Go tool (separate build system, not in Gradle)
+- Hidden files — `.claude/`, `.idea/`, `.vscode/`, `.whitesource`, `.codecov.yml`, `.flake8`, `.gitignore`
+
+**How it works:** A `detect-changes` job diffs the PR's changed files. If every file matches a skip pattern, all test jobs are skipped. If any file is outside the skip patterns, tests run normally. On errors, the safe default is to run tests.
+
+**For pushes to `main`:** The same paths are listed in `paths-ignore` on the `push` trigger (native GitHub feature).
+
+**To modify the skip list:** See the comment block in `jenkins_tests.yml` above the `paths-ignore` section. Both `paths-ignore` and the `detect-changes` case statement must be updated together.

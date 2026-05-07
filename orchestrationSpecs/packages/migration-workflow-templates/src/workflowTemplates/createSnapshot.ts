@@ -25,7 +25,6 @@ import {makeRequiredImageParametersForKeys} from "./commonUtils/imageDefinitions
 import {makeClusterParamDict} from "./commonUtils/clusterSettingManipulators";
 import {getHttpAuthSecretName} from "./commonUtils/clusterSettingManipulators";
 import {getSourceHttpAuthCreds, getTargetHttpAuthCreds} from "./commonUtils/basicCredsGetters";
-import {CONTAINER_TEMPLATE_RETRY_STRATEGY} from "./commonUtils/resourceRetryStrategy";
 
 const checkScript = `
   set -e
@@ -169,7 +168,6 @@ export const CreateSnapshot = WorkflowBuilder.create({
                 }
             }))
         )
-        .addRetryParameters(CONTAINER_TEMPLATE_RETRY_STRATEGY)
     )
 
     .addTemplate("checkSnapshotStatusInternal", t => t
