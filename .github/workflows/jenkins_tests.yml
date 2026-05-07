@@ -60,10 +60,18 @@ jobs:
             BASE=${{ github.event.pull_request.base.sha }}
             HEAD=${{ github.event.pull_request.head.sha }}
           fi
-          git fetch origin "$BASE" --depth=1 2>/dev/null || true
-          CHANGED=$(git diff --name-only "$BASE"..."$HEAD" 2>/dev/null || git diff --name-only HEAD~1)
+          # Fetch both SHAs (pull_request_target only checks out base branch)
+          git fetch origin "$BASE" "$HEAD" --depth=1 2>/dev/null || true
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD" 2>/dev/null || \
+                    git diff --name-only "$BASE".."$HEAD" 2>/dev/null || \
+                    echo "")
           echo "Changed files:"
           echo "$CHANGED"
+          if [ -z "$CHANGED" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Could not determine changed files, defaulting to run tests"
+            exit 0
+          fi
           # Check if ALL changed files match skip patterns
           DOMINATED=true
           while IFS= read -r file; do
