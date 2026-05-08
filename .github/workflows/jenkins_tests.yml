@@ -45,6 +45,21 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       should_run: ${{ github.event_name == 'push' || steps.check.outputs.should_run != 'false' }}
+      # Deployment-model filtering: when ALL changed files are confined to a
+      # single deployment model's infrastructure, only that model's tests run.
+      # If any shared/application code is touched, all models run.
+      #
+      # Path classification:
+      #   ECS-only:      deployment/cdk/**
+      #   EKS-only:      deployment/k8s/**
+      #   Docker-only:   TrafficCapture/dockerSolution/**
+      #   Shared (all):  everything else (migrationConsole/, RFS/, TrafficCapture/*, etc.)
+      #
+      # Safe default: on push to main or on error, all flags are 'true'.
+      run_ecs: ${{ github.event_name == 'push' || steps.check.outputs.run_ecs != 'false' }}
+      run_eks: ${{ github.event_name == 'push' || steps.check.outputs.run_eks != 'false' }}
+      run_k8s_local: ${{ github.event_name == 'push' || steps.check.outputs.run_k8s_local != 'false' }}
+      run_docker: ${{ github.event_name == 'push' || steps.check.outputs.run_docker != 'false' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -69,26 +84,67 @@ jobs:
           echo "$CHANGED"
           if [ -z "$CHANGED" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "Could not determine changed files, defaulting to run tests"
+            echo "run_ecs=true" >> "$GITHUB_OUTPUT"
+            echo "run_eks=true" >> "$GITHUB_OUTPUT"
+            echo "run_k8s_local=true" >> "$GITHUB_OUTPUT"
+            echo "run_docker=true" >> "$GITHUB_OUTPUT"
+            echo "Could not determine changed files, defaulting to run all tests"
             exit 0
           fi
-          # Check if ALL changed files match skip patterns
-          DOMINATED=true
+
+          # ── Layer 1: Skip-all check (docs, AI, hidden files) ──
+          SKIP_ALL=true
+          # ── Layer 2: Deployment-model classification ──
+          HAS_ECS=false
+          HAS_EKS=false
+          HAS_DOCKER=false
+          HAS_SHARED=false
+
           while IFS= read -r file; do
             [ -z "$file" ] && continue
             case "$file" in
+              # Skip-all patterns (never affect any test)
               *.md) ;;
               AIAdvisor/*) ;;
               .claude/*|.idea/*|.vscode/*|.whitesource|.codecov.yml|.flake8|.gitignore) ;;
-              *) DOMINATED=false; break ;;
+              # Deployment-model-specific paths
+              deployment/cdk/*) SKIP_ALL=false; HAS_ECS=true ;;
+              deployment/k8s/*) SKIP_ALL=false; HAS_EKS=true ;;
+              TrafficCapture/dockerSolution/*) SKIP_ALL=false; HAS_DOCKER=true ;;
+              # Everything else is shared code
+              *) SKIP_ALL=false; HAS_SHARED=true ;;
             esac
           done <<< "$CHANGED"
-          if [ "$DOMINATED" = "true" ]; then
+
+          if [ "$SKIP_ALL" = "true" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "All changes are in skip-paths, skipping tests"
+            echo "run_ecs=false" >> "$GITHUB_OUTPUT"
+            echo "run_eks=false" >> "$GITHUB_OUTPUT"
+            echo "run_k8s_local=false" >> "$GITHUB_OUTPUT"
+            echo "run_docker=false" >> "$GITHUB_OUTPUT"
+            echo "All changes are in skip-paths, skipping all tests"
+            exit 0
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+          # If any shared code is touched, run everything
+          if [ "$HAS_SHARED" = "true" ]; then
+            echo "run_ecs=true" >> "$GITHUB_OUTPUT"
+            echo "run_eks=true" >> "$GITHUB_OUTPUT"
+            echo "run_k8s_local=true" >> "$GITHUB_OUTPUT"
+            echo "run_docker=true" >> "$GITHUB_OUTPUT"
+            echo "Shared code changed, running all tests"
           else
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "Relevant changes detected, running tests"
+            # Only infrastructure-specific paths changed
+            # ECS tests run if ECS infra changed
+            echo "run_ecs=$HAS_ECS" >> "$GITHUB_OUTPUT"
+            # EKS and k8s-local both use deployment/k8s
+            echo "run_eks=$HAS_EKS" >> "$GITHUB_OUTPUT"
+            echo "run_k8s_local=$HAS_EKS" >> "$GITHUB_OUTPUT"
+            # Docker tests run if docker infra changed
+            echo "run_docker=$HAS_DOCKER" >> "$GITHUB_OUTPUT"
+            echo "Infrastructure-only change: ECS=$HAS_ECS EKS=$HAS_EKS Docker=$HAS_DOCKER"
           fi
 
   get-require-approval:
@@ -101,7 +157,7 @@ jobs:
 
   full-es68-e2e-aws-test:
     needs: [get-require-approval, sanitize-input, detect-changes]
-    if: needs.detect-changes.outputs.should_run == 'true'
+    if: needs.detect-changes.outputs.should_run == 'true' && needs.detect-changes.outputs.run_ecs == 'true'
     environment: ${{ needs.get-require-approval.outputs.is-require-approval }}
     runs-on: ubuntu-22.04
     concurrency:
@@ -122,7 +178,7 @@ jobs:
 
   elasticsearch-5x-k8s-local-test:
     needs: [get-require-approval, sanitize-input, detect-changes]
-    if: needs.detect-changes.outputs.should_run == 'true'
+    if: needs.detect-changes.outputs.should_run == 'true' && needs.detect-changes.outputs.run_k8s_local == 'true'
     environment: ${{ needs.get-require-approval.outputs.is-require-approval }}
     runs-on: ubuntu-22.04
     concurrency:
@@ -143,7 +199,7 @@ jobs:
 
   elasticsearch-8x-k8s-local-test:
     needs: [get-require-approval, sanitize-input, detect-changes]
-    if: needs.detect-changes.outputs.should_run == 'true'
+    if: needs.detect-changes.outputs.should_run == 'true' && needs.detect-changes.outputs.run_k8s_local == 'true'
     environment: ${{ needs.get-require-approval.outputs.is-require-approval }}
     runs-on: ubuntu-22.04
     concurrency:
@@ -164,7 +220,7 @@ jobs:
 
   solr-8x-k8s-local-test:
     needs: [get-require-approval, sanitize-input, detect-changes]
-    if: needs.detect-changes.outputs.should_run == 'true'
+    if: needs.detect-changes.outputs.should_run == 'true' && needs.detect-changes.outputs.run_k8s_local == 'true'
     environment: ${{ needs.get-require-approval.outputs.is-require-approval }}
     runs-on: ubuntu-22.04
     concurrency:
@@ -185,7 +241,7 @@ jobs:
 
   docker-compose-e2e-test:
     needs: [get-require-approval, sanitize-input, detect-changes]
-    if: needs.detect-changes.outputs.should_run == 'true'
+    if: needs.detect-changes.outputs.should_run == 'true' && needs.detect-changes.outputs.run_docker == 'true'
     environment: ${{ needs.get-require-approval.outputs.is-require-approval }}
     runs-on: ubuntu-22.04
     concurrency:
@@ -206,7 +262,8 @@ jobs:
 
   eks-integ-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-eks-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -231,7 +288,8 @@ jobs:
 
   eks-aoss-search-integ-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-aoss-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -256,7 +314,8 @@ jobs:
 
   eks-aoss-timeseries-integ-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-aoss-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -281,7 +340,8 @@ jobs:
 
   eks-aoss-vector-integ-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-aoss-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -306,7 +366,8 @@ jobs:
 
   eks-byos-integ-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-eks-byos-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -331,7 +392,8 @@ jobs:
 
   eks-cdc-full-e2e-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-eks-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -356,7 +418,8 @@ jobs:
 
   eks-cdc-aoss-e2e-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-eks-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -381,7 +444,8 @@ jobs:
 
   eks-cfn-create-vpc-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-cfn-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -406,7 +470,8 @@ jobs:
 
   eks-cfn-import-vpc-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-cfn-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]
@@ -431,7 +496,8 @@ jobs:
 
   eks-full-e2e-isolated-vpc-test:
     if: |
-      needs.detect-changes.outputs.should_run == 'true' && (
+      needs.detect-changes.outputs.should_run == 'true' &&
+      needs.detect-changes.outputs.run_eks == 'true' && (
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'run-eks-isolated-tests'))
     needs: [get-require-approval, sanitize-input, detect-changes]

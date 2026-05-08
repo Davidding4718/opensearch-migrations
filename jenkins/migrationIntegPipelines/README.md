@@ -141,14 +141,40 @@ To change a cadence or add one for a new `main-*` / `release-*` job, edit the sw
 
 ### Path Filtering
 
-Not all PRs need to run Jenkins tests. The `jenkins_tests.yml` workflow skips all 17 test jobs when a PR only touches files that cannot affect test outcomes:
+Not all PRs need to run Jenkins tests. The `jenkins_tests.yml` workflow has two layers of filtering:
+
+#### Layer 1: Skip-all (non-functional files)
+
+PRs that only touch these paths skip **all** Jenkins test jobs:
 
 - `**/*.md` — documentation
 - `AIAdvisor/**` — standalone Go tool (separate build system, not in Gradle)
 - Hidden files — `.claude/`, `.idea/`, `.vscode/`, `.whitesource`, `.codecov.yml`, `.flake8`, `.gitignore`
 
-**How it works:** A `detect-changes` job diffs the PR's changed files. If every file matches a skip pattern, all test jobs are skipped. If any file is outside the skip patterns, tests run normally. On errors, the safe default is to run tests.
+#### Layer 2: Deployment-model filtering (ECS vs EKS)
 
-**For pushes to `main`:** The same paths are listed in `paths-ignore` on the `push` trigger (native GitHub feature).
+When a PR only touches infrastructure-specific paths, only the relevant test category runs:
+
+| Path | Tests triggered | Tests skipped |
+|------|----------------|---------------|
+| `deployment/cdk/**` only | ECS tests (`full-es68-e2e-aws-test`) | EKS, k8s-local, Docker |
+| `deployment/k8s/**` only | EKS + k8s-local tests | ECS, Docker |
+| `TrafficCapture/dockerSolution/**` only | Docker Compose test | ECS, EKS, k8s-local |
+| Any other path (shared code) | All tests | None |
+
+**Test category mapping:**
+
+| Category | Jobs |
+|----------|------|
+| ECS | `full-es68-e2e-aws-test` |
+| EKS | `eks-integ-test`, `eks-aoss-*`, `eks-byos-*`, `eks-cdc-*`, `eks-cfn-*`, `eks-full-e2e-isolated-vpc-test` |
+| k8s-local | `elasticsearch-5x-k8s-local-test`, `elasticsearch-8x-k8s-local-test`, `solr-8x-k8s-local-test` |
+| Docker | `docker-compose-e2e-test` |
+
+**How it works:** The `detect-changes` job outputs `run_ecs`, `run_eks`, `run_k8s_local`, and `run_docker` flags. Each test job checks its relevant flag in addition to `should_run`.
+
+**Safe defaults:** On push to `main` or on any error, all flags default to `true` (run everything).
+
+**For pushes to `main`:** The `paths-ignore` on the `push` trigger handles Layer 1 (skip-all). Layer 2 does not apply to pushes — all deployment models are tested on every push to `main`.
 
 **To modify the skip list:** See the comment block in `jenkins_tests.yml` above the `paths-ignore` section. Both `paths-ignore` and the `detect-changes` case statement must be updated together.
